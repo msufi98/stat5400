@@ -1,0 +1,154 @@
+---
+title: "NHANES HEPATITUS"
+author: "Moiyyad Sufi"
+date: "2024-10-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+```
+
+## Preparing DataSet
+
+### Reading in Vaccination and immunity data
+
+```{r results = 'hide' }
+library(foreign)
+library(tidyr)
+
+
+direct <- "C:\\Moiyyad\\Data Bootcamp_part2\\NHANES\\Hepatitus\\"
+
+# Lab data  - People previously vaccinated
+nhanes1718_vaccine = read.xport(paste0(direct, "HEPB_S_J.XPT"))
+
+
+# Lab data  - People currently/previously infected and/or previous immunity
+nhanes1718_antibody = read.xport(paste0(direct, "HEPBD_J.XPT"))
+
+# Questionnaire Data - People previously infected
+nhanes1718_ques = read.xport(paste0(direct, "HEQ_J.XPT"))
+
+# merge antibodies and vaccines set to create dataframe set
+df <- merge(x = nhanes1718_antibody, y = nhanes1718_vaccine, by = "SEQN", all = TRUE)
+
+# merge response set and questionnaire
+df <- merge(x = df, y = nhanes1718_ques, by = "SEQN", all = TRUE)
+
+# Hepatitus-C and D columns not required
+df$LBDHD <- NULL
+df$HEQ030 <- NULL
+df$HEQ040 <- NULL
+
+
+# Only keep Yes and No Hep B Core Antibody
+# Had hepatitus in the past as high risk
+df <- df[which(df$LBXHBC %in% c(1,2)),]
+df$resp <- ifelse(df$LBXHBC == 1, 1, 0)
+
+summary(df$resp)
+
+
+# Only 1 and 0 remaining in resp array
+drop_na(df, resp)
+```
+
+### Reading in Demographic and Medical Conditioning data
+
+```{r}
+# Lab data  - Demographic data
+nhanes1718_demo = read.xport(paste0(direct, "DEMO_J.XPT"))
+
+# Lab data  - Demographic data
+nhanes1718_medical = read.xport(paste0(direct, "MCQ_J.XPT"))
+
+# Predictor array
+df2 <- nhanes1718_demo[nhanes1718_demo$SEQN %in% df$SEQN,]
+
+# Questionnaire data - previous Health
+df2 <- df2[c('SEQN','DMDBORN4','DMQADFC','INDFMIN2','RIAGENDR','RIDAGEYR','RIDRETH3','WTINT2YR','WTMEC2YR','SDMVPSU','SDMVSTRA')]
+
+nhanes1718_medical <- nhanes1718_medical[c('SEQN','MCQ053','MCD093', 'MCQ160L', 'MCQ500')]
+
+df2 <- merge(x = df2, y = nhanes1718_medical, by = "SEQN", all = TRUE)
+
+# Male as 0 and Female as 1
+df2$RIAGENDR <- df2$RIAGENDR - 1
+
+# Encoding Gender from 0 to 6
+df2$RIDRETH3 <- df2$RIDRETH3 -1 
+
+# df2$DMQADFC coding 0 as Served countries as abroad and 1 as Not served abroad
+df2[which(df2$DMQADFC %in% c(7, 9) | is.na(df2$DMQADFC)),]$DMQADFC <- 2
+df2$DMQADFC <- df2$DMQADFC - 1
+
+# Born in US removing 0 as Yes and 1 as No
+df2$DMDBORN4[which(df2$DMDBORN4 %in% c(77, 99))] <- 2
+df2$DMDBORN4 <- df2$DMDBORN4 - 1
+
+# Income impute NAs, Dont Knows and refused to median income, 50k to 54k,
+df2$INDFMIN2[is.na(df2$INDFMIN2)] <- median(df2$INDFMIN2, na.rm=TRUE)
+df2$INDFMIN2[which(df2$INDFMIN2 %in% c(77, 99))] <- median(df2$INDFMIN2)
+
+# Income classification as 0 to 20k, 20k to 55k, and 55k+
+df2$INDFMIN2[which(df2$INDFMIN2 < 5| df2$INDFMIN2 == 13)] <- 1
+df2$INDFMIN2[which((df2$INDFMIN2 >= 5 & df2$INDFMIN2 <= 8) | df2$INDFMIN2 == 12)] <- 2
+df2$INDFMIN2[which(df2$INDFMIN2 >= 9)] <- 3
+
+# Replace missing with no for anemia treatment
+df2$MCQ053[which(df2$MCQ053 == 9 | df2$MCQ053 == 7)] <- 2
+
+# Set did not receive transfusion
+df2$MCD093[which(df2$MCD093 == 9 | df2$MCD093 == 7 | is.na(df2$MCD093))] <- 0
+
+# Replace 'Refused', 'Don't know', and 'Missing' with 'No' (code 2) in both columns
+df2$MCQ160L <- ifelse(df2$MCQ160L %in% c(7, 9, NA), 2, df2$MCQ160L)
+df2$MCQ500 <- ifelse(df2$MCQ500 %in% c(7, 9, NA), 2, df2$MCQ500)
+
+# Create the combined column
+df2$combined_liver_condition <- ifelse(df2$MCQ160L == 1 | df2$MCQ500 == 1, 1, 2)
+```
+
+### Final Data Set creation
+
+```{r  results = 'hide' }
+merged_data <- merge(x = df, y = df2, by = "SEQN", all = FALSE)
+
+
+#merged_data <- subset(merged_data, select = -LBDHBG.x)
+merged_data <- subset(merged_data, select = -LBDHBG)
+merged_data <- subset(merged_data, select = -HEQ020)
+merged_data[which(is.na(merged_data$LBXHBS)),]$LBXHBS = 1
+
+merged_data$LBXHBS <- as.factor(merged_data$LBXHBS)
+```
+
+#Model Creation
+
+```{r}
+library(survey)
+survey_design <- svydesign(ids = ~SDMVPSU, strata = ~SDMVSTRA, weights = ~WTMEC2YR, data = merged_data, nest = TRUE)
+
+nhanes.svyd = svydesign(data=merged_data, id=~SDMVPSU, strata=~SDMVSTRA, weights=~WTMEC2YR, nest=TRUE)
+
+svymean(~resp, nhanes.svyd)
+
+# Log regression
+model_logistic <- svyglm(resp ~ LBXHBS+ HEQ010+ DMDBORN4 + DMQADFC + INDFMIN2 + RIAGENDR + RIDAGEYR + RIDRETH3 + MCQ053 + MCD093 + MCQ160L + MCQ500 + combined_liver_condition, design = nhanes.svyd, family = quasibinomial()) 
+
+print(summary(model_logistic))
+
+# Random Forest
+library(ranger)
+model_rf <- ranger(as.factor(resp) ~ LBXHBS+ HEQ010+ DMDBORN4 + DMQADFC + INDFMIN2 + RIAGENDR + RIDAGEYR + RIDRETH3 + MCQ053 + MCD093 + MCQ160L + MCQ500 + combined_liver_condition, 
+                   data = merged_data, 
+                   num.trees = 500, 
+                   importance = "impurity", 
+                   case.weights = merged_data$WTMEC2YR)
+
+print(model_rf)
+print(model_rf$confusion.matrix)
+print(model_rf$variable.importance)
+
+```

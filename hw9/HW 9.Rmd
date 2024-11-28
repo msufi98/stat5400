@@ -1,0 +1,447 @@
+---
+title: "HW 9 Bootstrap and Jackknife"
+author: "STAT 5400"
+date: "Due: Nov 1, 2024 9:30 AM"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+<!-- ```{r setup, include=FALSE} -->
+
+<!-- knitr::opts_chunk$set(echo = TRUE) -->
+
+<!-- ``` -->
+
+<!-- ### Reading assignments. -->
+
+### Problems
+
+**To help you prepare the midterm, the solution of this homework will be
+posted right after the deadline. Late homework will not be accepted
+without exceptions.**
+
+Submit your solutions as an .Rmd file and accompanying .pdf file.
+
+1.  Use `echo=TRUE, include=FALSE` to ensure that all the code are
+    provided but only the important output is included. Try to write
+    your homework in the form of a neat report and don't pile up any
+    redundant and irrelevant output.
+2.  *Always interpret your result whenever it is necessary*. Try to make
+    sure the interpretation can be understood by people with a moderate
+    level of statistics knowledge.
+
+### Reading assignments.
+
+Here is an undergraduate-level introduction to the bootstrap.
+<https://statweb.stanford.edu/~tibs/stat315a/Supplements/bootstrap.pdf>
+
+### Problems
+
+#### 1. Bootstrap and jackknife
+
+Consider the airconditioning data listed below:
+
+```         
+3, 5, 7, 18, 43, 85, 91, 98, 100, 130, 230, 487.
+```
+
+Suppose the mean of the underlying distribution is $\mu$ and our
+interest is to estimate $\log(\mu)$. To estimate it, we use the log of
+the sample mean, i.e., $\log(\bar{X})$, as an estimator.
+
+(a) Carry out a nonparametric bootstrap analysis to estimate the bias of
+    $\log(\bar{X})$.
+
+```{r}
+set.seed(5400)
+
+aircon <- c(3, 5, 7, 18, 43, 85, 91, 98, 100, 130, 230, 487)
+
+# sample estimate of log X bar
+rhat <- log(mean(aircon))
+
+n <- length(aircon); B <- 200
+boot.bias <- rep(NA, B)
+
+for (b in seq(B)) {
+  id <- sample(n,n, replace = TRUE)
+  boot.bias[b] <- log(mean(aircon[id]))
+  boot.bias[b] <- boot.bias[b]- rhat
+}
+
+(bias <- mean(boot.bias))
+```
+
+(b) Based on the bootstrap analysis, is the bias of $\log(\bar{X})$
+    positive or negative? (In other word, does $\log(\bar{X})$
+    overestimates or underestimates $\log(\mu)$) Can you explain the
+    observation? (Hint: Jensen's inequality)
+
+It is negative, i.e. it systematically underestimates log of mu which
+follows from Jensen's inequality for concave functions:
+$\log(E[X]) \geq E[\log(X)]$
+
+(c) Also run a nonparametric bootstrap to estimate the standard error of
+    the log of the sample mean. In terms of the mean square error of the
+    estimator, do you think the bias is large given the standard error?
+
+```{r}
+set.seed(5400)
+B <- 200; n <- length(aircon)
+boot.rep <- replicate(B, log(mean(aircon[sample(n, replace=TRUE) ])))
+(boot.se <- sd(boot.rep))
+
+```
+
+Compared to the standard error the Bias is quite small indicating that
+the standard deviation is a more important problem and bootstrap
+minimizes the bias well
+
+(d) Carry out a parametric bootstrap analysis to estimate the bias of
+    the log of sample mean. Assume that the population distribution of
+    failure times of airconditioning equipment is exponential.
+
+```{r}
+set.seed(5400)
+
+library(boot)
+
+B <- 200
+
+n <- length(aircon)
+
+# sample mean
+xbar = mean(aircon)
+
+# sample log mean
+rhat <- log(mean(aircon))
+
+boot.par.bias <- rep(NA, 200)
+
+for (b in seq(B)) {
+   boot.par.bias[b] <- log(mean(rexp(n=n,rate = 1/xbar)))
+   boot.par.bias[b] <- boot.par.bias[b] - rhat
+
+}
+
+(bias_par <- mean(boot.par.bias))
+
+```
+
+(e) Plot both the histograms of the bootstrap replications from
+    nonparametric and parametric bootstrap.
+
+```{r}
+hist(boot.bias,main="Non-parametric Bias replicates")
+
+hist(boot.par.bias,main="Parametric (Exp) Bias replicates")
+```
+
+As shown, the parametric methods reduce bias
+
+(f) Produce 95% confidence intervals by the standard normal, basic,
+    percentile, and Bca methods.
+
+```{r}
+# Standard Normal Conf Int
+set.seed(5400)
+
+# sample estimate of log X bar
+rhat <- log(mean(aircon))
+
+boot.obj <- boot(data=aircon, 
+                 statistic = function(x,i) log(mean(x[i])), 
+                 R=B)
+
+(boot.se <- sd(boot.obj$t))
+
+conf_int <- rhat + c(-1, 1) * qnorm(0.975) * boot.se
+
+cat('Normal Conf Int',conf_int)
+
+
+# Basic Conf Int
+boot.quan <- quantile(boot.obj$t, c(0.975, 0.025), type=6)
+conf_int <- 2 * rhat - boot.quan
+
+cat('Basic Conf Int',conf_int)
+
+
+# Percentile Conf Int
+cat('Percentile Conf Int',boot.quan)
+
+# BCA Conf Int
+bca <- boot.ci(boot.obj, type="bca")
+cat('BCA Conf Int',bca$bca[4],bca$bca[5])
+
+```
+
+(g) Use jackknife to estimate the standard error and bias of the log of
+    the sample mean.
+
+```{r}
+set.seed(5400)
+
+# sample estimate of correlation
+rhat <- log(mean(aircon))
+
+n <- length(aircon)
+
+# jackknife estimate of bias
+jack.r <- rep(NA, n)
+for (i in seq(n)) {
+ jack.r[i] <- log(mean(aircon[-i]))
+ }
+(jack.bias <- (n-1) * (mean(jack.r) - rhat))
+
+ # jackknife estimation of se
+(jack.se <- sqrt((n - 1) / n * sum((jack.r - mean(jack.r))^2)))
+```
+
+### 2. Failure of bootstrap
+
+The bootstrap is not foolproof. To see this, consider analysis of a
+binomial model with $n$ trials. You observe 0 successes. Discuss what
+would happen if you were to use the standard, non-parametric bootstrap
+in constructing a $95\%$ C.I. for the binomial parameter $p$.
+
+```{r}
+set.seed(5400)
+
+(bin_obs <- rbinom(10,1, 0.01))
+```
+
+Imagining a binomial model with two outcomes (0=failure and 1=success)
+with a very low probability of success (1%). This seed generates 0
+successes for 10 observations. Any non-parametric bootstrap would fail
+due to no variance in the observed responses as follows:
+
+```{r}
+# Bootstrap estimate of the mean
+muhat <- (mean(bin_obs))
+n <- length(bin_obs); B <- 200
+
+boot.bias <- rep(NA, B)
+
+for (b in seq(B)) {
+  id <- sample(n,n, replace = TRUE)
+  boot.rep[b] <- (mean(bin_obs[id]))
+}
+
+(bias <- mean(boot.rep))
+
+```
+
+### 3. Bootstrap estimate of the standard error of trimmed mean.
+
+Consider an artificial data set consisting of eight observations:
+
+```         
+1, 3, 4.5, 6, 6, 6.9, 13, 19.2.
+```
+
+Let $\hat{\theta}$ be the $25\%$ trimmed mean, which is computed by
+deleting two smallest numbers and two largest numbers, and then taking
+the average of the remaining four numbers.
+
+(a) Calculate $\widehat{\mathrm{se}}_B$ for
+    $B = 25,100,200,500,1000,2000$. From these results estimate the
+    ideal bootstrap estimate $\widehat{\mathrm{se}}_{\infty}$.
+
+```{r}
+set.seed(5400)
+
+obs <- c(1, 3, 4.5, 6, 6, 6.9, 13, 19.2)
+
+thetahat <- mean(obs, trim = .25)
+
+B <- c(25,100,200,500,1000,2000); n <- length(obs); se_vals <- vector()
+
+for(b in B) {
+  boot.rep <- replicate(b, (mean(obs[sample(n, replace=TRUE)], trim = 0.25)))
+  boot.se <- sd(boot.rep)
+  cat("St. Error Estimate for ", b, " replicates is: ", boot.se,"\n")
+  se_vals <- c(se_vals, boot.se)
+}
+
+hist(se_vals)
+```
+
+A standard error value of 2 seems appropriate
+
+(a) Repeat part (a) using twenty different random number seeds. Comment
+    on the trend of the variability of each $\widehat{\mathrm{se}}_B$.
+
+    ```{r}
+    set.seed(5400)
+    # Get 20 random seeds
+    seeds <- round(runif(20, 1000, 9999))
+
+B <- c(25, 100, 200, 500, 1000, 2000)
+
+
+    cat('Set of seeds: ', seeds)
+
+    se_values <- matrix(nrow = length(B), ncol = length(seeds))
+
+    # plot(1:10, xlim=c(0, 10), ylim=c(0,10))
+
+    for (i in seq_along(seeds)) {
+  set.seed(seeds[i])
+  obs <- c(1, 3, 4.5, 6, 6, 6.9, 13, 19.2)
+  thetahat <- mean(obs, trim = 0.25)
+      
+
+      
+      for (j in seq_along(B)) {
+    boot.rep <- replicate(B[j], mean(obs[sample(n, replace = TRUE)], trim = 0.25))
+    boot.se <- sd(boot.rep)
+    se_values[j, i] <- boot.se
+  }
+      
+    }
+   plot(B, se_values[,1], type = "l", ylim = range(se_values), log = "x",
+     xlab = "Bootstrap Sample Size", ylab = "Standard Error Estimate",
+     main = "Standard Error Estimates for Different Seeds")
+for (i in 2:length(seeds)) {
+  lines(B, se_values[,i], col = i)
+}
+
+    ```
+
+    The seed does seem to vary the variance quite a bit for some
+    variance values, sometimes even doubling the variance between
+    replications, however larger sizes reduces the variations
+
+#### 4. Hypothesis testing using bootstrap
+
+Consider two independent random samples $X$ and $Y$ drawn from possibly
+different probability distributions: \begin{equation*}
+\begin{aligned}
+&X_1, \ldots, X_n \stackrel{iid}{\sim} F,\\
+&Y_1, \ldots, Y_m \stackrel{iid}{\sim} G,\\
+&X_i \text{ is indepdent of } Y_j, \ \forall i, j.
+\end{aligned}
+\end{equation*} The goal is to perform a hypothesis test for
+\begin{equation*}
+\begin{aligned}
+H_0: F = G \text{ vs } H_1: F \neq G\\
+\end{aligned}
+\end{equation*} If $H_0$ is true, then there is no significant
+difference between random vectors $\mathbf{X}$ and $\mathbf{Y}$.
+
+The bootstrap algorithm for performing such test is given as below:
+
+-   Compute a statistic on the original sample:
+
+\begin{equation*}
+\begin{aligned}
+t(\mathbf{Z}) = |\bar{\mathbf{X}} - \bar{\mathbf{Y}}|.
+\end{aligned}
+\end{equation*}
+
+-   For each $b = 1, \ldots B$:
+
+    -   Generate bootstrap samples, $\mathbf{Z}^{\star b}$, by drawing
+        $(n+m)$ observations from $\mathbf{Z}$
+        \textbf{with replacement}.
+    -   Put
+        $\mathbf{X}^{\star b} = (Z_1^{\star b}, \ldots, Z_n^{\star b})$
+        and
+        $\mathbf{Y}^{\star b} = (Z_{n+1}^{\star b}, \ldots, Z_{n+m}^{\star b})$.
+    -   Compute bootstrap replications: \begin{equation*}
+        \begin{aligned}
+        t(\mathbf{Z}^{\star b}) = |\bar{\mathbf{X}}^{\star b} - \bar{\mathbf{Y}}^{\star b}|.
+        \end{aligned}
+        \end{equation*}
+
+-   Estimate the achieved significance level (ASL): \begin{equation*}
+    \begin{aligned}
+    \widehat{\mathrm{ASL}}_B  = \#\{t(\mathbf{Z}^{\star b}) \ge  t(\mathbf{Z})\} / B.
+    \end{aligned}
+    \end{equation*}
+
+-   Reject $H_0$ if $\mathrm{ASL} < \alpha$.
+
+Below is an example to test $F = G$, where $F \sim \exp(\mu = 2)$ and
+$G \sim \exp(\mu = 1/2)$.
+
+```{r}
+set.seed(5400)
+x <- rexp(20, rate=1/2)
+y <- rexp(10, rate=2)
+B <- 2000
+z <- c(x, y)
+tstat <- abs(mean(x) - mean(y))
+boot.r <- rep(NA, B)
+for (i in seq(B)) {
+  boot.samp <- z[sample(length(z), replace=TRUE)]
+  m.boot.x <- mean(boot.samp[seq_along(x)])
+  m.boot.y <- mean(boot.samp[-seq_along(x)])
+  boot.r[i] <- abs(m.boot.x - m.boot.y)
+}
+mean(boot.r > tstat)
+```
+
+Instead of using $|\bar{\mathbf{X}} - \bar{\mathbf{Y}}|$ as the test
+statistic, we may also use the $t$-statistic, if we assume equal
+variance: \begin{equation*}
+\begin{aligned}
+t(\mathbf{Z}) = \dfrac{|\bar{\mathbf{X}} - \bar{\mathbf{Y}}|}{\hat{\sigma}_{\mathrm{pool}} \sqrt{1/n + 1/m}},
+\end{aligned}
+\end{equation*} where \begin{equation*}
+\begin{aligned}
+\hat{\sigma}_{\mathrm{pool}} = \sqrt{\dfrac{1}{n+m-2}\left[\sum_{i=1}^n (X_i - \bar{\mathbf{X}})^2 + \sum_{j=1}^m (Y_j - \bar{\mathbf{Y}})^2\right]}.
+\end{aligned}
+\end{equation*}
+
+Please use bootstrap to test $F = G$ with the new statistics.
+
+
+```{r}
+set.seed(5400)
+x <- rexp(20, rate=1/2)
+y <- rexp(10, rate=2)
+B <- 2000
+z <- c(x, y)
+n <- length(x)
+m <- length(y)
+
+
+sum_of_squared_deviations <- function(x) {
+  # Calculate the mean of the vector
+  mean_x <- mean(x)
+  # Calculate the sum of squared deviations from the mean
+  sum((x - mean_x)^2)
+}
+
+tstat <- abs(mean(x) - mean(y))/ 
+  (sqrt((1/(n+m-2))*(sum_of_squared_deviations(x)+ sum_of_squared_deviations(y)))*(sqrt(1/n + 1/m)))
+
+boot.r <- rep(NA, B)
+for (i in seq(B)) {
+boot.samp <- z[sample(length(z), replace=TRUE)]
+
+m.boot.rep.x <- boot.samp[seq_along(x)]
+m.boot.rep.y <- boot.samp[-seq_along(x)]
+
+m.boot.x <- mean(boot.samp[seq_along(x)])
+m.boot.y <- mean(boot.samp[-seq_along(x)])
+boot.r[i] <- abs(m.boot.x - m.boot.y)
+
+n <- length(boot.samp[seq_along(x)])
+m <- length(boot.samp[-seq_along(x)])
+
+boot.r[i] <- abs(m.boot.x - m.boot.y)/ 
+  (sqrt((1/(n+m-2))*(sum_of_squared_deviations(m.boot.rep.x)+ sum_of_squared_deviations(m.boot.rep.y)))*(sqrt(1/n + 1/m)))
+}
+mean(boot.r > tstat)
+
+```
+
+Since p = 0.0115, which is less than 0.05, we would reject the null hypothesis at the 5% significance level, suggesting a significant difference between the distributions F and G.

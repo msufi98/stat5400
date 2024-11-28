@@ -1,0 +1,27 @@
+---
+title: "HW 11 Instructional Project 2"
+author: "STAT 5400"
+date: "Due: Nov 22, 2024. 9:30 AM"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+<!-- ```{r setup, include=FALSE} -->
+<!-- knitr::opts_chunk$set(echo = TRUE) -->
+<!-- ``` -->
+<!-- ### Reading assignments. -->
+
+### Problems
+#### 1. SQL (prepared by Austin Lee, Jing Tu, Lucas Regina,	Elias Washor,	Mingyu Huang)
+
+Homework questions on Pages 39 and 40 of the slides. The ipynb file can be also downloaded from the ICON site. 
+
+#### 2. PowerBI (prepared by Dev Baiju,	Calvin McElvain,	Wylan Gao,	Talia Gafrick,	Yu-Chao Huang)
+
+Homework question on the last page of the slides. Insert the generated PDF in your homework or take a screenshot.
+
+#### 3. Git and GitHub (prepared by David Roth,	Alpha,	Hong Chen,	Vamshi,	Kelsey Law)
+
+Two homework questions on the last two pages of the slides. 

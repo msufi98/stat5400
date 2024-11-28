@@ -1,0 +1,350 @@
+---
+title: "HPV Project"
+author: "Hong and Moiyyad"
+date: "2024-10-28"
+output:
+  pdf_document: default
+  html_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Our Assumption
+
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+library(DiagrammeR)
+library(dagitty)
+library(lavaan)
+library(ggdag)
+library(ggformula)
+library(caret)
+library(cowplot)
+library(tidyverse)
+library(foreign)
+library(Hmisc)
+library(survey)
+theme_set(theme_bw())
+MyPlot<-dagitty('
+  dag {
+    Age 
+    Gender 
+    Race 
+    Income 
+    HepatitisB_Vaccine
+    PastInfection 
+    Immunity 
+    ForeignCountryExp 
+    BornCountry
+    BloodTransfusion
+    LiverDisease
+    
+    Age -> HepatitisB_Vaccine
+    Gender -> HepatitisB_Vaccine
+    Race -> HepatitisB_Vaccine
+    Income -> HepatitisB_Vaccine
+    
+    
+    HepatitisB_Vaccine -> Immunity
+    Immunity -> PastInfection
+    ForeignCountryExp -> PastInfection
+    BornCountry -> PastInfection
+    BloodTransfusion -> PastInfection
+    LiverDisease -> PastInfection
+    
+}',layout = TRUE)
+plot(MyPlot)
+```
+
+## Predictive Model
+
+We will use *Immunity*,*PastInfection*,*ForeignCountryExp*,*BornCountry*,*BloodTransfusion*,*LiverDisease* as predictors to predict whether *PastInfection* or not.
+
+- Immunity: we will use predicted immunity to replace the missing values in **LBXHBS** (Hepatitis B Surface Antibody);the hepatitis B surface antibody (anti-HBs) demonstrates immunity acquired through vaccination.  
+- BloodTransfusion: indicated by **MCQ092** (Ever received blood transfusion);
+- ForeignCountryExp: indicated by **DMQADFC** (Whether served in a foreign country).
+- BornCountry: indicated by **DMDBORN4** (Born Country).
+- LiverDisease: indicated by **MCQ160L** (Ever told you had any liver condition (for age>-20))
+
+- PastInfection: indicated by **LBDHBC** (Hepatitis B Core Antigen) or **MCQ160L** (Ever told you had any liver condition)
+
+- CurrentInfection: indicated by **LBDHBG** (Hepatitis B Surface Antigen). Number of Non-Missing is 402. of Missing observations. For these participants with non-missing LBDHBG (31 Positive, 375 Negative), they all had past infection experience indicated by **LBXHBC** (Hepatitis B Core Antibody). 
+
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+PredictivePlot<-dagitty('
+  dag {
+    Immunity 
+    ForeignCountryExp 
+    BornCountry
+    PastInfection
+    BloodTransfusion
+    LiverDisease
+   
+    Immunity -> PastInfection
+    BornCountry -> PastInfection
+    ForeignCountryExp -> PastInfection
+    BloodTransfusion -> PastInfection
+    LiverDisease -> PastInfection
+    
+}',layout = TRUE)
+plot(PredictivePlot)
+```
+
+
+## Our DataSet
+
+We merged several dataset: 
+
+- DEMO_J.XPT (Demographic dataset);   
+- HEPB_S_J.XPT (immunization dataset); 
+- HEPBD_J.XPT (Blood test dataset);
+- HEQ_J.XPT (Hepatitis questionare dataset); 
+- IMQ_J.XPT (vaccine dataset); 
+- MCQ_J.XPT (Medical condition dataset).
+
+```{r,echo=FALSE}
+Demographic<-read.xport("DEMO_J.XPT")
+Demographic<-Demographic[,c("SEQN","DMDBORN4","DMQADFC","INDFMIN2","RIAGENDR","RIDAGEYR","RIDRETH3",
+                            "WTINT2YR","WTMEC2YR","SDMVPSU","SDMVSTRA")]
+Demographic$RIDRETH3<-factor(Demographic$RIDRETH3,levels = c(1,2,3,4,6,7),
+                             labels = c("Mexican American","Other Hispanic","Non-Hispanic White","Non-Hispanic Black","Non-Hispanic Asian","Non-Hispanic Others"))
+Demographic$DMQADFC<-factor(Demographic$DMQADFC,levels = c(1,2,7,9),labels = c("Yes","No","Refused","Dont Know"))
+Demographic$DMDBORN4<-factor(Demographic$DMDBORN4,levels = c(1,2,77,99),labels = c("Born in US","Others","Refused","Dont Know"))
+Demographic$INDFMIN2<-factor(Demographic$INDFMIN2,levels = sort(unique(Demographic$INDFMIN2)),
+                             labels = c("$0-$4999","$5000-9999","$10,000-14,999","$15,000-19,999","$20,000-24,999",
+                                        "$25,000-34,999","$35,000-44,999","$45,000-54,999","$55,000-64,999","$65,000-74,999",
+                                        "$20,000 and over","Under $20,000","75,000-99,999","$100,000 and Over","Refused","Dont Know"))
+Demographic$RIAGENDR<-factor(Demographic$RIAGENDR,levels = c(1,2),labels = c("Male","Female"))
+
+
+###Lots of Missing in Drug Use
+# DrugUse<-read.xport("DUQ_J.XPT")
+
+###Examined participants aged 2 years and older were eligible.
+HBV_SurfaceAntibody<-read.xport("HEPB_S_J.XPT")
+HBV_SurfaceAntibody$LBXHBS<-factor(HBV_SurfaceAntibody$LBXHBS,levels = c(1,2,3),labels = c("Positive","Negative","Indeterminate"))
+
+###Examined participants aged 6 years or older were eligible.
+HBV_CoreAntibody<-read.xport("HEPBD_J.XPT")
+HBV_CoreAntibody<-HBV_CoreAntibody[,c("SEQN","LBXHBC","LBDHBG")]
+HBV_CoreAntibody$LBXHBC<-factor(HBV_CoreAntibody$LBXHBC,levels = c(1,2,3),labels = c("Positive","Negative","Indeterminate"))
+HBV_CoreAntibody$LBDHBG<-factor(HBV_CoreAntibody$LBDHBG,levels = c(1,2,3),labels = c("Positive","Negative","Indeterminate"))
+
+###The Hepatitis questionnaire (variable name prefix HEQ) provides respondent-level interview data on previous 
+###diagnosis of hepatitis B and hepatitis C and, among participants reporting a previous diagnosis, reported 
+###prescription medication treatment. Participants aged 6 years and over were eligible.
+Hepatitis<-read.xport("HEQ_J.XPT")
+Hepatitis<-Hepatitis[,c("SEQN","HEQ010","HEQ020")]
+Hepatitis$HEQ010<-factor(Hepatitis$HEQ010,levels = c(1,2,7,9),labels = c("Yes","No","Refused","Dont Know"))
+Hepatitis$HEQ020<-factor(Hepatitis$HEQ020,levels = c(1,2,7,9),labels = c("Yes","No","Refused","Dont Know"))
+
+Hepatitis_Dat<-left_join(full_join(HBV_SurfaceAntibody,HBV_CoreAntibody,by = "SEQN"),Hepatitis,by = "SEQN")
+rm(HBV_CoreAntibody,HBV_SurfaceAntibody,Hepatitis)
+
+
+###Participants aged 2 years and older were asked about the hepatitis A vaccination; all participants were asked 
+###about the hepatitis B vaccination; and participants 9 to 59 years of age were asked about the HPV vaccination.
+Immunization<-read.xport("IMQ_J.XPT")
+Immunization<-Immunization[,c("SEQN","IMQ011","IMQ020")]
+Immunization$IMQ011<-factor(Immunization$IMQ011,levels = c(1,2,3,7,9),
+                            labels = c("Yes,at least 2 doses","Less than 2 doses","No doses","Refused","Dont Know"))
+Immunization$IMQ020<-factor(Immunization$IMQ020,levels = c(1,2,3,7,9),
+                            labels = c("Yes,at least 2 doses","Less than 2 doses","No doses","Refused","Dont Know"))
+
+
+Med_Dat<-left_join(Immunization,Hepatitis_Dat,by = "SEQN")
+rm(Immunization,Hepatitis_Dat)
+
+MedicalCondition_Dat<-read.xport("MCQ_J.XPT")
+MedicalCondition_Dat<-MedicalCondition_Dat[,c("SEQN","MCQ092","MCQ160L","MCQ170L","MCQ500")]
+MedicalCondition_Dat$MCQ092<-factor(MedicalCondition_Dat$MCQ092,levels = c(1,2,7,9),labels = c("Yes","No","Refused","Dont Know"))
+MedicalCondition_Dat$MCQ160L<-factor(MedicalCondition_Dat$MCQ160L,levels = c(1,2,9),labels = c("Yes","No","Dont Know"))
+MedicalCondition_Dat$MCQ170L<-factor(MedicalCondition_Dat$MCQ170L,levels = c(1,2,9),labels = c("Yes","No","Dont Know"))
+MedicalCondition_Dat$MCQ500<-factor(MedicalCondition_Dat$MCQ500,levels = c(1,2),labels = c("Yes","No"))
+Med_Dat<-left_join(Med_Dat,MedicalCondition_Dat,by = "SEQN")
+FullDat<-full_join(Demographic,Med_Dat,by = "SEQN")
+rm(Med_Dat,Demographic,MedicalCondition_Dat)
+
+
+col_labels<-c(SEQN="ID",
+              DMDBORN4="Born Country",
+              DMQADFC="Sever in a foreign country",INDFMIN2="Family Income",
+              RIAGENDER="Gender",RIDAGEYR="Age(0-80)",
+              RIDRETH3="Race(Six Categories Including Non-Hispanic Asian)",
+              WTINT2YR="Full Sample 2 year interview weight",WTMEC2YR="Full Sample 2 year MEC exam weight",
+              SDMVPSU="Masked variance pseudo-PSU",SDMVSTRA="Masked variance pseudo-stratum",
+              IMQ011="Hepatitis A Vaccine",IMQ020="Hepatitis B 3 dose",
+              LBXHBS="Hepatitis B Surface Antibody",LBXHBC="Hepatitis B Core Antibody",LBDHBG="Hepatitis B Surface Antigen",
+              HEQ010="Ever told you have Hepatitis B",HEQ020="Ever prescribed meds treat Hepatitis B",
+              MCQ092="Ever received blood transfusion",
+              MCQ160L="Ever told you had any liver condition (for age>=20)",
+              MCQ170L="Do you still have a liver condition (for age >=20)",
+              MCQ500="Ever told you had any liver condition (for age 12-19 years)")
+label(FullDat)<-as.list(col_labels[match(names(FullDat),names(col_labels))])
+colnames(FullDat)<-paste(colnames(FullDat),col_labels,sep = ":")
+#write_xlsx(FullDat,"Hepatitis project dataset.xlsx")
+rm(col_labels)
+FullDat[,"WhetherVaccine"]<-1
+FullDat[which(FullDat$`IMQ020:Hepatitis B 3 dose`=="No doses"),"WhetherVaccine"]<-0
+
+FullDat$`DMQADFC:Sever in a foreign country`<-as.character(FullDat$`DMQADFC:Sever in a foreign country`)
+FullDat[is.na(FullDat$`DMQADFC:Sever in a foreign country`),"DMQADFC:Sever in a foreign country"]<-"No"
+FullDat[which(FullDat$`DMQADFC:Sever in a foreign country`=="Refused"),"DMQADFC:Sever in a foreign country"]<-"No"
+FullDat$`DMQADFC:Sever in a foreign country`<-as.factor(FullDat$`DMQADFC:Sever in a foreign country`)
+FullDat$`DMDBORN4:Born Country`<-as.character(FullDat$`DMDBORN4:Born Country`)
+FullDat[which(FullDat$`DMDBORN4:Born Country`%in%c("Refused","Dont Know")),"DMDBORN4:Born Country"]<-"Others"
+FullDat$`DMDBORN4:Born Country`<-as.factor(FullDat$`DMDBORN4:Born Country`)
+FullDat$`MCQ092:Ever received blood transfusion`<-as.character(FullDat$`MCQ092:Ever received blood transfusion`)
+FullDat[which(FullDat$`MCQ092:Ever received blood transfusion`%in%c("Refused","Dont Know")),"MCQ092:Ever received blood transfusion"]<-"No"
+FullDat[is.na(FullDat$`MCQ092:Ever received blood transfusion`),"MCQ092:Ever received blood transfusion"]<-"No"
+FullDat$`MCQ092:Ever received blood transfusion`<-as.factor(FullDat$`MCQ092:Ever received blood transfusion`)
+FullDat$`MCQ160L:Ever told you had any liver condition (for age>=20)`<-as.character(FullDat$`MCQ160L:Ever told you had any liver condition (for age>=20)`)
+FullDat[which(FullDat$`MCQ160L:Ever told you had any liver condition (for age>=20)`=="Dont Know"),"MCQ160L:Ever told you had any liver condition (for age>=20)"]<-"No"
+FullDat[is.na((FullDat$`MCQ160L:Ever told you had any liver condition (for age>=20)`)),"MCQ160L:Ever told you had any liver condition (for age>=20)"]<-"No"
+FullDat$`MCQ160L:Ever told you had any liver condition (for age>=20)`<-as.factor(FullDat$`MCQ160L:Ever told you had any liver condition (for age>=20)`)
+
+FullDat[is.na(FullDat$`INDFMIN2:Family Income`),"INDFMIN2:Family Income"]<-"$45,000-54,999"
+FullDat[which(FullDat$`INDFMIN2:Family Income`%in%c("Refused","Dont Know")),"INDFMIN2:Family Income"]<-"$45,000-54,999"
+FullDat[,"FamilyIncome_Low"]<-0
+FullDat[which(FullDat$`INDFMIN2:Family Income`%in%c("$0-$4999","$5000-9999","$10,000-14,999","Under $20,000")),"FamilyIncome_Low"]<-1
+FullDat[,"FamilyIncome_Medium"]<-0
+FullDat[which(FullDat$`INDFMIN2:Family Income`%in%c("$25,000-34,999","$35,000-44,999","$45,000-54,999","$55,000-64,999",
+                                                    "$20,000 and over")),"FamilyIncome_Medium"]<-1
+
+FullDat<-FullDat[which(FullDat$`LBXHBC:Hepatitis B Core Antibody`%in%c("Positive","Negative")),]
+```
+
+
+## Survey Design
+
+```{r}
+HepatitisB_svyd<-svydesign(data = FullDat,ids = ~`SDMVPSU:Masked variance pseudo-PSU`,
+                           strata = ~`SDMVSTRA:Masked variance pseudo-stratum`,
+                           weights = ~`WTMEC2YR:Full Sample 2 year MEC exam weight`,
+                           nest = TRUE)
+Means<-svymean(~`LBXHBC:Hepatitis B Core Antibody`,HepatitisB_svyd)
+barplot(Means)
+```
+
+
+### Step 1: The probability for a participant taking the HBV
+
+$log\frac{P(Vaccine=Yes|Age,Race,Gender,Income)}{P(Vaccine=No|Age,Race,Gender,Income)}=b_0+b_1*Age+b_2*Race+b_3*Gender+b_4*Income$
+
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+P1<-svydesign(ids = ~`SDMVPSU:Masked variance pseudo-PSU`,
+              strata = ~`SDMVSTRA:Masked variance pseudo-stratum`,
+              weights = ~`WTMEC2YR:Full Sample 2 year MEC exam weight`,
+              data = FullDat,
+              nest = TRUE)
+P1_Model<-svyglm(formula = WhetherVaccine~`RIDAGEYR:Age(0-80)`+`RIAGENDR:Gender`+`RIDRETH3:Race(Six Categories Including Non-Hispanic Asian)`+FamilyIncome_Low+FamilyIncome_Medium,
+                 design = P1,family = quasibinomial())
+summary(P1_Model)
+FullDat[,"Predicted_Pro_Vaccine"]<-predict.glm(P1_Model,type = "response")
+FullDat[,"WhetherVaccine"]<-1
+FullDat[which(FullDat$`IMQ020:Hepatitis B 3 dose`=="No doses"|FullDat$Predicted_Pro_Vaccine<0.5),"WhetherVaccine"]<-0
+FullDat$WhetherVaccine<-as.factor(FullDat$WhetherVaccine)
+gf_bar(~WhetherVaccine,data = FullDat)
+
+FullDat[,"VaccineDoses"]<-0
+FullDat[which(FullDat$`IMQ020:Hepatitis B 3 dose`=="Less than 2 doses"),"VaccineDoses"]<-1
+FullDat[which(FullDat$`IMQ020:Hepatitis B 3 dose`=="Yes,at least 2 doses"),"VaccineDoses"]<-2
+FullDat$VaccineDoses<-factor(FullDat$VaccineDoses,levels = c(0,1,2),
+                             labels = c("No doses","1 dose","2 or 3 doses"))   
+gf_bar(~VaccineDoses,data = FullDat)
+```
+
+The sample size used to predict WhetherVaccineOrNot is `r dim(FullDat)[1]`. Masked Variance weights (SDMVPSU and SDMVSTRA) and Full Sample 2 year MEC weight (WTMEC2YR) are used in svyglm function.
+
+Original Variable "IMQ020: Hepatitis B 3 dose", if "Refused" or "Dont Know" or "Missing", use predicted_probability to impute values. If the predicted_probability in Step 1 is larger than 0.5, classify the participants to "1 dose", below than 0.5, classify the participants to "0 dose".
+
+### Step 2:
+
+Step 2: The probability for a participant getting immunity through the HBV.
+
+$log\frac{P(Immunity=Yes|VaccineDoses))}{P(Immunity=No|VaccineDoses)}=\beta_0 +\beta_1*VaccineDoses$
+
+```{r,echo=FALSE,message=FALSE,warning=FALSE}
+SampleSize_P2<-length(which(is.na(FullDat$`LBXHBS:Hepatitis B Surface Antibody`)==FALSE))
+WhichComplete_P2<-which(is.na(FullDat$`LBXHBS:Hepatitis B Surface Antibody`)==FALSE)
+P2<-svydesign(ids = ~`SDMVPSU:Masked variance pseudo-PSU`,
+              strata = ~`SDMVSTRA:Masked variance pseudo-stratum`,
+              weights = ~`WTMEC2YR:Full Sample 2 year MEC exam weight`,
+              data = FullDat,
+              nest = TRUE)
+P2_Model<-svyglm(formula = `LBXHBS:Hepatitis B Surface Antibody`~ VaccineDoses,
+                 design = P2,family = quasibinomial())
+summary(P2_Model)
+FullDat[WhichComplete_P2,"Predicted_Pro_Immunity"]<-predict.glm(P2_Model,type = "response")
+df_stats(~Predicted_Pro_Immunity,data = FullDat[WhichComplete_P2,],min,max,mean,sd)
+```
+
+The sample size used to predict WhetherImmunityOrNot is `r SampleSize_P2`. Masked Variance weights (SDMVPSU and SDMVSTRA) and Full Sample 2 year MEC weight (WTMEC2YR) are used in svyglm function.
+
+
+### Step 3: Predictive Model 
+
+$log(\frac{P(PastInfection=Yes)}{P(PastInfection=No)}=B_0+B_1*ImmunityProb+B_2*ForeignCountryExp+B_3*BornCountry+B_4*BloodsTranfusion$
+       
+```{r,echo=FALSE,message=FALSE,warning=FALSE}
+WhichComplete_P3<-intersect(intersect(which(!is.na(FullDat$`LBXHBC:Hepatitis B Core Antibody`)),which(!is.na(FullDat$Predicted_Pro_Immunity))),which(!is.na(FullDat$`MCQ160L:Ever told you had any liver condition (for age>=20)`)))
+SampleSize_P3<-length(WhichComplete_P3)
+FullDat$`LBXHBC:Hepatitis B Core Antibody`<-as.character(FullDat$`LBXHBC:Hepatitis B Core Antibody`)
+FullDat$`LBXHBC:Hepatitis B Core Antibody`<-factor(FullDat$`LBXHBC:Hepatitis B Core Antibody`,levels = c("Positive","Negative"))
+#table(P3_Dat$`LBXHBC:Hepatitis B Core Antibody`)
+P3<-svydesign(ids = ~`SDMVPSU:Masked variance pseudo-PSU`,
+              strata = ~`SDMVSTRA:Masked variance pseudo-stratum`,
+              weights = ~`WTMEC2YR:Full Sample 2 year MEC exam weight`,
+              data = FullDat,
+              nest = TRUE)
+P3_Model<-svyglm(formula = `LBXHBC:Hepatitis B Core Antibody`~Predicted_Pro_Immunity+`DMQADFC:Sever in a foreign country`+`DMDBORN4:Born Country`+
+                   `MCQ092:Ever received blood transfusion`+`MCQ160L:Ever told you had any liver condition (for age>=20)`,
+                 design = P3,family = quasibinomial())
+summary(P3_Model)
+
+MyPredictors<-cbind(rep(1,SampleSize_P3),FullDat$Predicted_Pro_Immunity[WhichComplete_P3],FullDat$`DMQADFC:Sever in a foreign country`[WhichComplete_P3],FullDat$`DMDBORN4:Born Country`[WhichComplete_P3],FullDat$`MCQ092:Ever received blood transfusion`[WhichComplete_P3],FullDat$`MCQ160L:Ever told you had any liver condition (for age>=20)`[WhichComplete_P3])
+MyCoefficents<-matrix(coef(P3_Model))
+FullDat[WhichComplete_P3,"Predicted_Pro_PastInfection"]<-1-1/(1+exp(-MyPredictors%*%MyCoefficents))
+Validity<-FullDat[!is.na(FullDat$Predicted_Pro_PastInfection),]
+CutOff<-seq(min(Validity$Predicted_Pro_PastInfection),max(Validity$Predicted_Pro_PastInfection),length.out=100)
+DecisionCri<-data.frame()
+for(CutOff_value in CutOff){
+  Validity[,"Predicted_PastInfection"]<-"Negative"
+  Validity[which(Validity$Predicted_Pro_PastInfection>CutOff_value),"Predicted_PastInfection"]<-"Positive"
+  Validity$Predicted_PastInfection<-factor(Validity$Predicted_PastInfection,levels = c("Positive","Negative"))
+  Validity_Current<-Validity[!is.na(Validity$`LBDHBG:Hepatitis B Surface Antigen`),]
+  Validity_Current$`LBDHBG:Hepatitis B Surface Antigen`<-as.character(Validity_Current$`LBDHBG:Hepatitis B Surface Antigen`)
+  Validity_Current$`LBDHBG:Hepatitis B Surface Antigen`<-factor(Validity_Current$`LBDHBG:Hepatitis B Surface Antigen`,levels = c("Positive","Negative"))
+  Result<-confusionMatrix(data = Validity$Predicted_PastInfection,reference=Validity$`LBXHBC:Hepatitis B Core Antibody`)
+  Result_Current<-confusionMatrix(data = Validity_Current$Predicted_PastInfection,reference = Validity_Current$`LBDHBG:Hepatitis B Surface Antigen`)
+  DecisionCri<-rbind(DecisionCri,
+                     c(CutOff_value,Result$overall["Accuracy"],Result$byClass[c("Sensitivity","Specificity")],
+                       Result_Current$overall["Accuracy"],Result_Current$byClass[c("Sensitivity","Specificity")]))
+  colnames(DecisionCri)<-c("CutOff",
+                           "Accuracy(PastInfection)","Sensitivity(PastInfection)","Specificity(PastInfection)",
+                           "Accuracy(CurrentInfection)","Sensitivity(CurrentInfection)","Specificity(CurrentInfection)")
+}
+plot_dat<-data.frame(CutOff=rep(DecisionCri$CutOff,6),
+                     Values=c(DecisionCri$`Accuracy(PastInfection)`,DecisionCri$`Sensitivity(PastInfection)`,DecisionCri$`Specificity(PastInfection)`,
+                              DecisionCri$`Accuracy(CurrentInfection)`,DecisionCri$`Sensitivity(CurrentInfection)`,DecisionCri$`Specificity(CurrentInfection)`),
+                     Type=rep(rep(c("Accuracy","Sensitivity","Specificity"),each=length(DecisionCri$CutOff)),2),
+                     Status=rep(c("PastInfection","CurrentInfection"),each=length(DecisionCri$`Accuracy(CurrentInfection)`)*3))
+plot_dat$Type<-as.factor(plot_dat$Type)
+plot_dat$Status<-as.factor(plot_dat$Status)
+gf_line(Values~CutOff,data = plot_dat,color = ~Status)%>%
+  gf_facet_wrap(~Type)%>%
+  gf_labs(x="Cut-off Probability for PastInfection",y="Rate")%>%
+  gf_theme(legend.position="bottom")  
+
+OurCut<-1-length(which(FullDat$`LBDHBG:Hepatitis B Surface Antigen`=="Positive"))/(length(which(FullDat$`LBDHBG:Hepatitis B Surface Antigen`%in%c("Positive","Negative"))))
+Validity[,"Predicted_PastInfection"]<-"Negative"
+Validity[which(Validity$Predicted_Pro_PastInfection>OurCut),"Predicted_PastInfection"]<-"Positive"
+Validity$Predicted_PastInfection<-factor(Validity$Predicted_PastInfection,levels = c("Positive","Negative"))
+Validity_Current<-Validity[!is.na(Validity$`LBDHBG:Hepatitis B Surface Antigen`),]
+Validity_Current$`LBDHBG:Hepatitis B Surface Antigen`<-as.character(Validity_Current$`LBDHBG:Hepatitis B Surface Antigen`)
+Validity_Current$`LBDHBG:Hepatitis B Surface Antigen`<-factor(Validity_Current$`LBDHBG:Hepatitis B Surface Antigen`,levels = c("Positive","Negative"))
+Our_Current<-confusionMatrix(data = Validity_Current$Predicted_PastInfection,reference = Validity_Current$`LBDHBG:Hepatitis B Surface Antigen`)
+```
+     
